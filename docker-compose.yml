@@ -1,0 +1,86 @@
+services:
+  db:
+    platform: linux/amd64
+    container_name: db
+    image: postgres:18.3-bookworm
+    ports:
+      - 5432:5432
+    env_file:
+      - .env
+    volumes:
+      - db_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  rabbitmq:
+    platform: linux/amd64
+    container_name: rabbitmq
+    image: rabbitmq:4.2.5-management
+    ports:
+      - 5672:5672
+      - 15672:15672
+    env_file:
+      - .env
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping"]
+      interval: 5s
+      timeout: 5s
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: no
+
+  api:
+    build: .
+    command: python -m src.presentation.api.main
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  consumer:
+    build: .
+    command: python -m src.presentation.messaging.main
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  db_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
